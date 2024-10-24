@@ -1,33 +1,36 @@
 import copy
 import itertools
-
 import numpy as np
 import torch
 from scvi.data import AnnDataManager
 from scvi.dataloaders import AnnTorchDataset
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Sampler
 
-
-# adjusted from scvi-tools
+# Adjusted from scvi-tools
 # https://github.com/YosefLab/scvi-tools/blob/ac0c3e04fcc2772fdcf7de4de819db3af9465b6b/scvi/dataloaders/_ann_dataloader.py#L15
-# accessed on 4 November 2021
-class StratifiedSampler(torch.utils.data.sampler.Sampler):
-    """Custom stratified sampler class which enables sampling the same number of observation from each group in each mini-batch.
+# Accessed on 4 November 2021
+
+class StratifiedSampler(Sampler):
+    """Custom stratified sampler to sample the same number of observations from each group in each mini-batch.
 
     Parameters
     ----------
-    indices
+    indices : np.ndarray
         List of indices to sample from.
-    batch_size
-        Batch size of each iteration.
-    shuffle
-        If ``True``, shuffles indices before sampling.
-    drop_last
-        If int, drops the last batch if its length is less than drop_last.
-        If drop_last == True, drops last non-full batch.
-        If drop_last == False, iterate over all batches.
+    group_labels : np.ndarray
+        Labels for each index indicating group membership.
+    batch_size : int
+        Batch size for each iteration.
+    min_size_per_class : int
+        Minimum number of samples per class in each batch.
+    shuffle : bool, optional
+        If ``True``, shuffles indices before sampling, by default ``True``.
+    drop_last : bool | int, optional
+        If int, drops the last batch if its length is less than drop_last. If ``True``, drops last non-full batch.
+        If ``False``, iterates over all batches, by default ``True``.
+    shuffle_classes : bool, optional
+        If ``True``, shuffles classes before sampling, by default ``True``.
     """
-
     def __init__(
         self,
         indices: np.ndarray,
@@ -40,26 +43,21 @@ class StratifiedSampler(torch.utils.data.sampler.Sampler):
     ):
         if drop_last > batch_size:
             raise ValueError(
-                "drop_last can't be greater than batch_size. "
-                + f"drop_last is {drop_last} but batch_size is {batch_size}."
+                f"drop_last can't be greater than batch_size. drop_last is {drop_last} but batch_size is {batch_size}."
             )
 
         if batch_size % min_size_per_class != 0:
             raise ValueError(
-                "min_size_per_class has to be a divisor of batch_size."
-                + f"min_size_per_class is {min_size_per_class} but batch_size is {batch_size}."
+                f"min_size_per_class has to be a divisor of batch_size. min_size_per_class is {min_size_per_class} but batch_size is {batch_size}."
             )
 
         self.indices = indices
         self.group_labels = group_labels
-        self.n_obs = len(indices)
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.shuffle_classes = shuffle_classes
         self.min_size_per_class = min_size_per_class
         self.drop_last = drop_last
-
-        from math import ceil
 
         classes = list(dict.fromkeys(self.group_labels))
 
@@ -136,31 +134,38 @@ class StratifiedSampler(torch.utils.data.sampler.Sampler):
     def __len__(self):
         return self.length
 
-
-# adjusted from scvi-tools
+# Adjusted from scvi-tools
 # https://github.com/scverse/scvi-tools/blob/0b802762869c43c9f49e69fe62b1a5a9b5c4dae6/scvi/dataloaders/_ann_dataloader.py#L89
-# accessed on 5 November 2022
+# Accessed on 5 November 2022
+
 class GroupAnnDataLoader(DataLoader):
     """DataLoader for loading tensors from AnnData objects.
 
     Parameters
     ----------
-    adata_manager
-        :class:`~scvi.data.AnnDataManager` object with a registered AnnData object.
-    shuffle
-        Whether the data should be shuffled.
-    indices
-        The indices of the observations in the adata to load.
-    batch_size
-        Minibatch size to load each iteration.
-    data_and_attributes
-        Dictionary with keys representing keys in data registry (`adata.uns["_scvi"]`)
-        and value equal to desired numpy loading type (later made into torch tensor).
-        If `None`, defaults to all registered data.
-    data_loader_kwargs
-        Keyword arguments for :class:`~torch.utils.data.DataLoader`.
+    adata_manager : AnnDataManager
+        scvi.data.AnnDataManager object with a registered AnnData object.
+    group_column : str
+        Column in AnnData.obs that contains group labels.
+    shuffle : bool, optional
+        Whether to shuffle the data, by default True.
+    shuffle_classes : bool, optional
+        Whether to shuffle the classes, by default True.
+    indices : array-like, optional
+        Indices of the observations to load, by default None.
+    batch_size : int, optional
+        Batch size to load each iteration, by default 128.
+    min_size_per_class : int, optional
+        Minimum size per class in each batch, by default None.
+    data_and_attributes : dict, optional
+        Dictionary of data and attributes to load, by default None.
+    drop_last : bool | int, optional
+        Whether to drop the last incomplete batch, by default True.
+    sampler : Sampler, optional
+        Sampler to use, by default StratifiedSampler.
+    **data_loader_kwargs
+        Additional keyword arguments for DataLoader.
     """
-
     def __init__(
         self,
         adata_manager: AnnDataManager,
@@ -172,21 +177,21 @@ class GroupAnnDataLoader(DataLoader):
         min_size_per_class=None,
         data_and_attributes: dict | None = None,
         drop_last: bool | int = True,
-        sampler: torch.utils.data.sampler.Sampler | None = StratifiedSampler,
+        sampler: Sampler | None = StratifiedSampler,
         **data_loader_kwargs,
     ):
         if adata_manager.adata is None:
             raise ValueError("Please run register_fields() on your AnnDataManager object first.")
 
-        if data_and_attributes is not None:
+        if data_and_attributes:
             data_registry = adata_manager.data_registry
             for key in data_and_attributes.keys():
-                if key not in data_registry.keys():
+                if key not in data_registry:
                     raise ValueError(f"{key} required for model but not registered with AnnDataManager.")
 
         if group_column not in adata_manager.registry["setup_args"]["categorical_covariate_keys"]:
             raise ValueError(
-                f"{group_column} required for model but not in categorical covariates has to be one of the registered categorical covariates = {adata_manager.registry['setup_args']['categorical_covariate_keys']}."
+                f"{group_column} required for model but not in categorical covariates. Must be one of {adata_manager.registry['setup_args']['categorical_covariate_keys']}."
             )
 
         self.dataset = AnnTorchDataset(adata_manager, getitem_tensors=data_and_attributes)
@@ -195,6 +200,8 @@ class GroupAnnDataLoader(DataLoader):
             min_size_per_class = batch_size // 2
 
         sampler_kwargs = {
+            "indices": indices if indices is not None else np.arange(len(self.dataset)),
+            "group_labels": np.array(adata_manager.adata[indices].obsm["_scvi_extra_categorical_covs"][group_column]),
             "batch_size": batch_size,
             "shuffle": shuffle,
             "drop_last": drop_last,
@@ -202,25 +209,8 @@ class GroupAnnDataLoader(DataLoader):
             "shuffle_classes": shuffle_classes,
         }
 
-        if indices is None:
-            indices = np.arange(len(self.dataset))
-            sampler_kwargs["indices"] = indices
-        else:
-            if hasattr(indices, "dtype") and indices.dtype is np.dtype("bool"):
-                indices = np.where(indices)[0].ravel()
-            indices = np.asarray(indices)
-            sampler_kwargs["indices"] = indices
-
-        sampler_kwargs["group_labels"] = np.array(
-            adata_manager.adata[indices].obsm["_scvi_extra_categorical_covs"][group_column]
-        )
-
-        self.indices = indices
-        self.sampler_kwargs = sampler_kwargs
-
-        sampler = sampler(**self.sampler_kwargs)
+        sampler_instance = sampler(**sampler_kwargs)
         self.data_loader_kwargs = copy.copy(data_loader_kwargs)
-        # do not touch batch size here, sampler gives batched indices
-        self.data_loader_kwargs.update({"sampler": sampler, "batch_size": None})
+        self.data_loader_kwargs.update({"sampler": sampler_instance, "batch_size": None})
 
         super().__init__(self.dataset, **self.data_loader_kwargs)
