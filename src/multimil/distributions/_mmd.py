@@ -1,73 +1,62 @@
 import torch
-
+from typing import Optional, List
 
 class MMD(torch.nn.Module):
     """Maximum mean discrepancy.
 
     Parameters
     ----------
-    kernel_type
+    kernel_type : str
         Indicates if to use Gaussian kernel. One of
         * ``'gaussian'`` - use Gaussian kernel
         * ``'not gaussian'`` - do not use Gaussian kernel.
     """
 
-    def __init__(self, kernel_type="gaussian"):
+    def __init__(self, kernel_type: str = "gaussian"):
         super().__init__()
         self.kernel_type = kernel_type
-        # TODO: add check for gaussian kernel that shapes are same
 
     def gaussian_kernel(
         self,
         x: torch.Tensor,
         y: torch.Tensor,
-        gamma: list[float] | None = None,
+        gamma: Optional[List[float]] = None,
     ) -> torch.Tensor:
-        """Apply Guassian kernel.
+        """Apply Gaussian kernel.
 
         Parameters
         ----------
-        x
+        x : torch.Tensor
             Tensor from the first distribution.
-        y
+        y : torch.Tensor
             Tensor from the second distribution.
-        gamma
+        gamma : Optional[List[float]]
             List of gamma parameters.
 
         Returns
         -------
-        Gaussian kernel between ``x`` and ``y``.
+        torch.Tensor
+            Gaussian kernel between ``x`` and ``y``.
         """
+
+        # Check if x and y have the same shape
+        if x.shape != y.shape:
+            raise ValueError(f"Input tensors x and y must have the same shape, but got {x.shape} and {y.shape}")
+
         if gamma is None:
-            gamma = [
-                1e-6,
-                1e-5,
-                1e-4,
-                1e-3,
-                1e-2,
-                1e-1,
-                1,
-                5,
-                10,
-                15,
-                20,
-                25,
-                30,
-                35,
-                100,
-                1e3,
-                1e4,
-                1e5,
-                1e6,
-            ]
+            gamma = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1,
+                     1, 5, 10, 15, 20, 25, 30, 35, 100,
+                     1e3, 1e4, 1e5, 1e6]
 
-        D = torch.cdist(x, y).pow(2)
-        K = torch.zeros_like(D)
+        # Convert gamma to a torch.Tensor (ensure it's on the correct device)
+        gamma = torch.as_tensor(gamma, device=x.device, dtype=x.dtype)
+        D = torch.cdist(x, y).pow(2).unsqueeze(-1)
 
-        for g in gamma:
-            K.add_(torch.exp(D.mul(-g)))
+        # This computes the exponential for all gamma values in one operation and then averages over the gamma dimension.
+        gamma = gamma.view(1, 1, -1)
+        K = torch.exp(-D * gamma).mean(dim=-1)
 
-        return K / len(gamma)
+        return K
 
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """Forward computation.
@@ -81,18 +70,27 @@ class MMD(torch.nn.Module):
 
         Parameters
         ----------
-        x
+        x : torch.Tensor
             Tensor with shape ``(batch_size, z_dim)``.
-        y
+        y : torch.Tensor
             Tensor with shape ``(batch_size, z_dim)``.
 
         Returns
         -------
-        MMD between ``x`` and ``y``.
+        torch.Tensor
+            MMD between ``x`` and ``y``.
         """
-        # in case there is only one sample in a batch belonging to one of the groups, then skip the batch
+        # In case there is only one sample in a batch belonging to one of the groups, then skip the batch
         if len(x) == 1 or len(y) == 1:
             return torch.tensor(0.0)
+
+        # Resampling logic to ensure x and y have the same shape NEW (03.10.2024)
+        if x.shape[0] > y.shape[0]:
+            indices = torch.randperm(x.shape[0])[:y.shape[0]]
+            x = x[indices]
+        elif y.shape[0] > x.shape[0]:
+            indices = torch.randperm(y.shape[0])[:x.shape[0]]
+            y = y[indices]
 
         if self.kernel_type == "gaussian":
             Kxx = self.gaussian_kernel(x, x).mean()
