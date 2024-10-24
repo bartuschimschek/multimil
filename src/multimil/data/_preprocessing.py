@@ -26,7 +26,6 @@ def organize_multimodal_anndatas(
     Concatenated AnnData object across modalities and datasets.
     """
 
-    # TODO: add check that len of modalities is the same as len of losses, etc (DONE)
     # Validate the layers parameter
     if layers is not None:
         if len(adatas) != len(layers):
@@ -82,7 +81,7 @@ def organize_multimodal_anndatas(
                 # Keep all the .obs
                 if datasets_obs.get(i, None) is None:
                     datasets_obs[i] = adata.obs
-                    if adata.shape[0] > 0: ## Only assign if there are observations
+                    if adata.shape[0] > 0: # Only assign if there are observations
                       datasets_obs[i].loc[:, "group"] = i
                 else:
                     cols_to_use = adata.obs.columns.difference(datasets_obs[i].columns)
@@ -102,7 +101,6 @@ def organize_multimodal_anndatas(
                     layer = layers[mod][i]
                     adatas[mod][i] = adatas[mod][i].copy()
                     adatas[mod][i].X = adatas[mod][i].layers[layer].copy()
-            #gc.collect()
 
     # Concat adatas within each modality first
     mod_adatas = []
@@ -118,5 +116,5 @@ def organize_multimodal_anndatas(
     # We will need modality_length later for the model init
     multiome_anndata.uns["modality_lengths"] = modality_lengths
     multiome_anndata.var_names_make_unique()
-    #gc.collect()
+
     return multiome_anndata
