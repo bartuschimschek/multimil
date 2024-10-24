@@ -7,7 +7,6 @@ from torch.nn import functional as F
 from multimil.nn import MLP, Aggregator
 from multimil.utils import prep_minibatch, select_covariates
 
-
 class MILClassifierTorch(BaseModuleClass):
     """MultiMIL's MIL classification module.
 
@@ -93,9 +92,11 @@ class MILClassifierTorch(BaseModuleClass):
             self.activation = nn.LeakyReLU
         elif activation == "tanh":
             self.activation = nn.Tanh
+        elif activation == "relu":
+            self.activation = nn.ReLU
         else:
             raise NotImplementedError(
-                f'activation should be one of ["leaky_relu", "tanh"], but activation={activation} was passed.'
+                f'activation should be one of ["leaky_relu", "tanh", "relu"], but activation={activation} was passed.'
             )
 
         self.class_loss_coef = class_loss_coef
@@ -191,8 +192,8 @@ class MILClassifierTorch(BaseModuleClass):
         return {"x": x}
 
     def _get_generative_input(self, tensors, inference_outputs):
-        z_joint = inference_outputs["z_joint"]
-        return {"z_joint": z_joint}
+        z = inference_outputs["z"]
+        return {"z": z}
 
     @auto_move_data
     def inference(self, x) -> dict[str, torch.Tensor | list[torch.Tensor]]:
@@ -207,8 +208,8 @@ class MILClassifierTorch(BaseModuleClass):
         -------
         Predictions.
         """
-        z_joint = x
-        inference_outputs = {"z_joint": z_joint}
+        z = x
+        inference_outputs = {"z": z}
 
         # MIL part
         batch_size = x.shape[0]
@@ -218,7 +219,7 @@ class MILClassifierTorch(BaseModuleClass):
             batch_size % self.sample_batch_size != 0
         ):  # can only happen during inference for last batches for each sample
             idx = []
-        zs = torch.tensor_split(z_joint, idx, dim=0)
+        zs = torch.tensor_split(z, idx, dim=0)
         zs = torch.stack(zs, dim=0)  # num of bags x batch_size x z_dim
         zs_attn = self.cell_level_aggregator(zs)  # num of bags x cond_dim
 
@@ -231,23 +232,23 @@ class MILClassifierTorch(BaseModuleClass):
         inference_outputs.update(
             {"predictions": predictions}
         )  # predictions are a list as they can have different number of classes
-        return inference_outputs  # z_joint, mu, logvar, predictions
+        return inference_outputs  # z, mu, logvar, predictions
 
     @auto_move_data
-    def generative(self, z_joint) -> torch.Tensor:
+    def generative(self, z) -> torch.Tensor:
         # TODO even if not used, make consistent with the rest, i.e. return dict
         """Forward pass for generative.
 
         Parameters
         ----------
-        z_joint
+        z
             Latent embeddings.
 
         Returns
         -------
         Same as input.
         """
-        return z_joint
+        return z
 
     def _calculate_loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
