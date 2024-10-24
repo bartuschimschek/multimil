@@ -1,5 +1,6 @@
 import logging
 import warnings
+from typing import Union
 
 import anndata as ad
 import torch
@@ -8,7 +9,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from scvi import REGISTRY_KEYS
 from scvi.data import AnnDataManager, fields
 from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY
-from scvi.model._utils import parse_use_gpu_arg
+from scvi.model._utils import parse_device_args
 from scvi.model.base import ArchesMixin, BaseModelClass
 from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.model.base._utils import _initialize_model
@@ -326,7 +327,8 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         self,
         max_epochs: int = 200,
         lr: float = 5e-4,
-        use_gpu: str | int | bool | None = None,
+        accelerator: str = "auto",
+        device: Union[int, str] = "auto",
         train_size: float = 0.9,
         validation_size: float | None = None,
         batch_size: int = 256,
@@ -454,7 +456,8 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             train_size=train_size,
             validation_size=validation_size,
             batch_size=batch_size,
-            use_gpu=use_gpu,
+            accelerator=accelerator,
+            device=device,
         )
         training_plan = AdversarialTrainingPlan(self.module, **plan_kwargs)
         runner = TrainRunner(
@@ -462,7 +465,8 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             training_plan=training_plan,
             data_splitter=data_splitter,
             max_epochs=max_epochs,
-            use_gpu=use_gpu,
+            accelerator=accelerator,
+            device=device,
             early_stopping=early_stopping,
             check_val_every_n_epoch=check_val_every_n_epoch,
             early_stopping_monitor=early_stopping_monitor,
@@ -583,7 +587,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
 
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
-            z = outputs["z_joint"]
+            z = outputs["z"]
             pred = outputs["predictions"]
 
             latent += [z.cpu()]
@@ -702,9 +706,10 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     @classmethod
     def load_query_data(
         cls,
-        adata: AnnData,
+        adata: AnnData, #ad.AnnData ???
         reference_model: BaseModelClass,
-        use_gpu: str | int | bool | None = None,
+        accelerator: str = "auto",
+        device: Union[int, str] = "auto",
         freeze: bool = True,
         ignore_covariates: list[str] | None = None,
     ) -> BaseModelClass:
@@ -730,7 +735,13 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         -------
         Model with updated architecture and weights.
         """
-        _, _, device = parse_use_gpu_arg(use_gpu)
+
+        _, _, device = parse_device_args(
+            accelerator=accelerator,
+            devices=device,
+            return_device="torch",
+            validate_single_device=True,
+        )
 
         attr_dict, _, _ = _get_loaded_data(reference_model, device=device)
 
@@ -767,7 +778,8 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         new_vae = MultiVAE.load_query_data(
             adata,
             reference_model=reference_model.multivae,
-            use_gpu=use_gpu,
+            accelerator=accelerator,
+            device=device,
             freeze=freeze,
             ignore_covariates=ignore_covariates
             + reference_model.mil.classification
@@ -798,7 +810,8 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         self,
         max_epochs: int = 200,
         lr: float = 1e-4,
-        use_gpu: str | int | bool | None = None,
+        accelerator: str = "auto",
+        device: Union[int, str] = "auto",
         train_size: float = 0.9,
         validation_size: float | None = None,
         batch_size: int = 256,
@@ -874,12 +887,18 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         vae = self.multivae
         vae.module = self.module.vae_module
 
-        _, _, device = parse_use_gpu_arg(use_gpu)
+        _, _, device = parse_device_args(
+            accelerator=accelerator,
+            devices=device,
+            return_device="torch",
+            validate_single_device=True,
+        )
 
         vae.train(
             max_epochs=max_epochs,
             lr=lr,
-            use_gpu=use_gpu,
+            accelerator=accelerator,
+            device=device,
             train_size=train_size,
             validation_size=validation_size,
             batch_size=batch_size,
