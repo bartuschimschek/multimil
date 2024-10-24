@@ -337,3 +337,4 @@ class Aggregator(nn.Module):
                 A = A * A.shape[-1] / self.patient_batch_size
 
             pooled = torch.bmm(A, x).squeeze(dim=1)  # (batch_size, n_input)
+            return pooled
