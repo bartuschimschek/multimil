@@ -1,9 +1,7 @@
 import torch
 from scvi import REGISTRY_KEYS
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
-
 from multimil.module import MILClassifierTorch, MultiVAETorch
-
 
 class MultiVAETorch_MIL(BaseModuleClass):
     """MultiMIL's end-to-end multimodal integration and MIL classification modules.
@@ -215,7 +213,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         return {"x": x, "cat_covs": cat_covs, "cont_covs": cont_covs}
 
     def _get_generative_input(self, tensors, inference_outputs):
-        z_joint = inference_outputs["z_joint"]
+        z = inference_outputs["z"]
 
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
@@ -223,7 +221,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
-        return {"z_joint": z_joint, "cat_covs": cat_covs, "cont_covs": cont_covs}
+        return {"z": z, "cat_covs": cat_covs, "cont_covs": cont_covs}
 
     @auto_move_data
     def inference(self, x, cat_covs, cont_covs) -> dict[str, torch.Tensor | list[torch.Tensor]]:
@@ -244,20 +242,20 @@ class MultiVAETorch_MIL(BaseModuleClass):
         """
         # VAE part
         inference_outputs = self.vae_module.inference(x, cat_covs, cont_covs)
-        z_joint = inference_outputs["z_joint"]
+        z = inference_outputs["z"]
 
         # MIL part
-        mil_inference_outputs = self.mil_module.inference(z_joint)
+        mil_inference_outputs = self.mil_module.inference(z)
         inference_outputs.update(mil_inference_outputs)
-        return inference_outputs  # z_joint, mu, logvar, z_marginal, predictions
+        return inference_outputs  # z, mu, logvar, z_marginal, predictions
 
     @auto_move_data
-    def generative(self, z_joint, cat_covs, cont_covs) -> dict[str, torch.Tensor]:
+    def generative(self, z, cat_covs, cont_covs) -> dict[str, torch.Tensor]:
         """Compute necessary inference quantities.
 
         Parameters
         ----------
-        z_joint
+        z
             Tensor of values with shape ``(batch_size, z_dim)``.
         cat_covs
             Categorical covariates to condition on.
@@ -268,7 +266,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         -------
         Reconstructed values for each modality.
         """
-        return self.vae_module.generative(z_joint, cat_covs, cont_covs)
+        return self.vae_module.generative(z, cat_covs, cont_covs)
 
     def loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
         """Calculate the (modality) reconstruction loss, Kullback divergences and integration loss.
