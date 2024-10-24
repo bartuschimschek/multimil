@@ -1,5 +1,6 @@
 import logging
-from typing import Literal
+from typing import Literal, Union
+
 
 import anndata as ad
 import torch
@@ -8,7 +9,7 @@ from scvi import REGISTRY_KEYS
 from scvi.data import AnnDataManager, fields
 from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY
 from scvi.dataloaders import DataSplitter
-from scvi.model._utils import parse_use_gpu_arg
+from scvi.model._utils import parse_device_args
 from scvi.model.base import ArchesMixin, BaseModelClass
 from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.model.base._utils import _initialize_model
@@ -32,45 +33,45 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     integrate_on
         One of the categorical covariates refistered with :math:`~multigrate.model.MultiVAE.setup_anndata` to integrate on. The latent space then will be disentangled from this covariate. If `None`, no integration is performed.
     condition_encoders
-        Whether to concatentate covariate embeddings to the first layer of the encoders. Default is `False`.
+        Whether to concatentate covariate embeddings to the first layer of the encoders.
     condition_decoders
-        Whether to concatentate covariate embeddings to the first layer of the decoders. Default is `True`.
+        Whether to concatentate covariate embeddings to the first layer of the decoders.
     normalization
-        What normalization to use; has to be one of `batch` or `layer`. Default is `layer`.
+        What normalization to use; has to be one of `batch` or `layer`.
     z_dim
-        Dimensionality of the latent space. Default is 16.
+        Dimensionality of the latent space.
     losses
-        Which losses to use for each modality. Has to be the same length as the number of modalities. Default is `MSE` for all modalities.
+        Which losses to use for each modality. Has to be the same length as the number of modalities.
     dropout
-        Dropout rate. Default is 0.2.
+        Dropout rate.
     cond_dim
-        Dimensionality of the covariate embeddings. Default is 16.
+        Dimensionality of the covariate embeddings.
     kernel_type
-        Type of kernel to use for the MMD loss. Default is `gaussian`.
+        Type of kernel to use for the MMD loss.
     loss_coefs
-        Loss coeficients for the different losses in the model. Default is 1 for all.
+        Loss coeficients for the different losses in the model.
     cont_cov_type
-        How to calculate embeddings for continuous covariates. Default is `logsim`.
+        How to calculate embeddings for continuous covariates.
     n_layers_cont_embed
-        Number of layers for the continuous covariate embedding calculation. Default is 1.
+        Number of layers for the continuous covariate embedding calculation.
     n_layers_encoders
         Number of layers for each encoder. Default is 2 for all modalities. Has to be the same length as the number of modalities.
     n_layers_decoders
         Number of layers for each decoder. Default is 2 for all modalities. Has to be the same length as the number of modalities.
     n_hidden_cont_embed
-        Number of nodes for each hidden layer in the continuous covariate embedding calculation. Default is 32.
+        Number of nodes for each hidden layer in the continuous covariate embedding calculation.
     n_hidden_encoders
-        Number of nodes for each hidden layer in the encoders. Default is 32.
+        Number of nodes for each hidden layer in the encoders.
     n_hidden_decoders
-        Number of nodes for each hidden layer in the decoders. Default is 32.
+        Number of nodes for each hidden layer in the decoders.
     mmd
-        Which MMD loss to use. Default is `latent`.
+        Which MMD loss to use.
     activation
-        Activation function to use. Default is `leaky_relu`.
+        Activation function to use.
     initialization
-        Initialization method to use. Default is `None`.
+        Initialization method to use.
     ignore_covariates
-        List of covariates to ignore. Needed for query-to-reference mapping. Default is `None`.
+        List of covariates to ignore. Needed for query-to-reference mapping.
     """
 
     def __init__(
@@ -244,8 +245,9 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         for tensors in scdl:
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
-            z = outputs["z_joint"]
+            z = outputs["z"]
             latent += [z.cpu()]
+            #gc.collect()
 
         adata.obsm["X_multiMIL"] = torch.cat(latent).numpy()
 
@@ -253,7 +255,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         self,
         max_epochs: int = 200,
         lr: float = 5e-4,
-        use_gpu: str | int | bool | None = None,
+        accelerator: str = "auto",
+        devices: int | list[int] | str = "auto",
         train_size: float = 0.9,
         validation_size: float | None = None,
         batch_size: int = 256,
@@ -368,7 +371,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                 train_size=train_size,
                 validation_size=validation_size,
                 batch_size=batch_size,
-                use_gpu=use_gpu,
             )
         else:
             data_splitter = DataSplitter(
@@ -376,7 +378,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                 train_size=train_size,
                 validation_size=validation_size,
                 batch_size=batch_size,
-                use_gpu=use_gpu,
             )
         training_plan = AdversarialTrainingPlan(self.module, **plan_kwargs)
         runner = TrainRunner(
@@ -384,7 +385,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             training_plan=training_plan,
             data_splitter=data_splitter,
             max_epochs=max_epochs,
-            use_gpu=use_gpu,
             early_stopping=early_stopping,
             check_val_every_n_epoch=check_val_every_n_epoch,
             early_stopping_monitor="reconstruction_loss_validation",
@@ -392,6 +392,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             enable_checkpointing=True,
             **kwargs,
         )
+        #gc.collect()
         return runner()
 
     @classmethod
@@ -455,14 +456,15 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         plt_plot_losses(self.history, loss_names, save)
 
     # adjusted from scvi-tools
-    # https://github.com/scverse/scvi-tools/blob/0b802762869c43c9f49e69fe62b1a5a9b5c4dae6/scvi/model/base/_archesmixin.py#L30
-    # accessed on 5 November 2022
+    # https://github.com/scverse/scvi-tools/blob/d094c9b3c14e8cb3ac3a309b9cf0160aff237393/scvi/model/base/_archesmixin.py#L28-L157
+    # accessed on 14 August 2024
     @classmethod
     def load_query_data(
         cls,
         adata: ad.AnnData,
         reference_model: BaseModelClass,
-        use_gpu: str | int | bool | None = None,
+        accelerator: str = "auto",
+        device: Union[int, str] = "auto",
         freeze: bool = True,
         ignore_covariates: list[str] | None = None,
     ) -> BaseModelClass:
@@ -488,7 +490,13 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         -------
         Model with updated architecture and weights.
         """
-        _, _, device = parse_use_gpu_arg(use_gpu)
+
+        _, _, device = parse_device_args(
+            accelerator=accelerator,
+            devices=device,
+            return_device="torch",
+            validate_single_device=True,
+        )
 
         attr_dict, _, load_state_dict = _get_loaded_data(reference_model, device=device)
 
@@ -553,7 +561,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             for _, par in model.module.named_parameters():
                 par.requires_grad = False
             for i, embed in enumerate(model.module.cat_covariate_embeddings):
-                if num_of_cat_to_add[i] > 0:  # unfreeze the ones where categories were added
+                if num_of_cat_to_add[i] > 0: # unfreeze the ones where categories were added
                     embed.weight.requires_grad = True
             if model.module.integrate_on_idx is not None:
                 model.module.theta.requires_grad = True
