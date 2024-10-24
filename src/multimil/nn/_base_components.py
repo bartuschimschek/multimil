@@ -1,10 +1,9 @@
-from typing import Literal
+from typing import Optional, Literal
 
 import torch
 from scvi.nn import FCLayers
 from torch import nn
 from torch.nn import functional as F
-
 
 class MLP(nn.Module):
     """A helper class to build blocks of fully-connected, normalization, dropout and activation layers.
@@ -72,7 +71,6 @@ class MLP(nn.Module):
         """
         return self.mlp(x)
 
-
 class Decoder(nn.Module):
     """A helper class to build custom decoders depending on which loss was passed.
 
@@ -123,15 +121,14 @@ class Decoder(nn.Module):
             normalization=normalization,
             activation=activation,
         )
+
         if loss == "mse":
             self.recon_decoder = nn.Linear(n_hidden, n_output)
         elif loss == "nb":
             self.mean_decoder = nn.Sequential(nn.Linear(n_hidden, n_output), nn.Softmax(dim=-1))
-
         elif loss == "zinb":
             self.mean_decoder = nn.Sequential(nn.Linear(n_hidden, n_output), nn.Softmax(dim=-1))
             self.dropout_decoder = nn.Linear(n_hidden, n_output)
-
         elif loss == "bce":
             self.recon_decoder = FCLayers(
                 n_in=n_hidden,
@@ -156,13 +153,12 @@ class Decoder(nn.Module):
         Tensor of values with shape ``(n_output,)``.
         """
         x = self.decoder(x)
-        if self.loss == "mse" or self.loss == "bce":
+        if self.loss in ["mse", "bce"]:
             return self.recon_decoder(x)
         elif self.loss == "nb":
             return self.mean_decoder(x)
         elif self.loss == "zinb":
             return self.mean_decoder(x), self.dropout_decoder(x)
-
 
 class GeneralizedSigmoid(nn.Module):
     """Sigmoid, log-sigmoid or linear functions for encoding continuous covariates.
@@ -175,29 +171,32 @@ class GeneralizedSigmoid(nn.Module):
 
     Parameters
     ----------
-    dim
+    dim : int
         Number of input features.
-    nonlin
-        Type of non-linearity to use. Can be one of ["logsigm", "sigm"]. Default is "logsigm".
+    nonlin : Optional[str], optional
+        Type of non-linearity to use. Can be one of ["logsigm", "sigm", None], by default "logsigm".
     """
 
-    def __init__(self, dim, nonlin: Literal["logsigm", "sigm"] | None = "logsigm"):
+    def __init__(self, dim: int, nonlin: Optional[Literal["logsigm", "sigm"]] = "logsigm"):
         super().__init__()
         self.nonlin = nonlin
+        if self.nonlin not in ["logsigm", "sigm", None]:
+            raise ValueError(f"Invalid nonlin value: {self.nonlin}")
         self.beta = torch.nn.Parameter(torch.ones(1, dim), requires_grad=True)
         self.bias = torch.nn.Parameter(torch.zeros(1, dim), requires_grad=True)
 
-    def forward(self, x) -> torch.Tensor:
-        """Forward computation on ``x``.
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward computation on `x`.
 
         Parameters
         ----------
-        x
-            Tensor of values.
+        x : torch.Tensor
+            Input tensor.
 
         Returns
         -------
-        Tensor of values with the same shape as ``x``.
+        torch.Tensor
+            Output tensor with the same shape as `x`.
         """
         if self.nonlin == "logsigm":
             return (torch.log1p(x) * self.beta + self.bias).sigmoid()
@@ -206,45 +205,48 @@ class GeneralizedSigmoid(nn.Module):
         else:
             return x
 
-
 class Aggregator(nn.Module):
-    """A helper class to build custom aggregators depending on the scoring function passed.
+    """A helper class to build custom aggregators depending on the scoring function.
 
     Parameters
     ----------
-    n_input
+    n_input : int
         Number of input features.
-    scoring
-        Scoring function to use. Can be one of ["attn", "gated_attn", "mlp"].
-    attn_dim
+    scoring : str, optional
+        Scoring function to use. Can be one of ["attn", "gated_attn", "mlp", "sum", "mean", "max"], by default "gated_attn".
+    attn_dim : int, optional
         Dimension of the hidden attention layer.
-    sample_batch_size
+    sample_batch_size : Optional[int], optional
         Bag batch size.
-    scale
+    scale : bool, optional
         Whether to scale the attention weights.
-    dropout
+    dropout : float, optional
         Dropout rate.
-    n_layers_mlp_attn
+    n_layers_mlp_attn : int, optional
         Number of hidden layers in the MLP attention.
-    n_hidden_mlp_attn
+    n_hidden_mlp_attn : int, optional
         Number of hidden units in the MLP attention.
-    activation
+    activation : callable, optional
         Activation function to use.
     """
 
     def __init__(
         self,
-        n_input=None,
-        scoring="gated_attn",
-        attn_dim=16,  # D
-        sample_batch_size=None,
-        scale=False,
-        dropout=0.2,
-        n_layers_mlp_attn=1,
-        n_hidden_mlp_attn=16,
+        n_input: int,
+        scoring: str = "gated_attn",
+        attn_dim: int = 16,
+        sample_batch_size: Optional[int] = None,
+        scale: bool = False,
+        dropout: float = 0.2,
+        n_layers_mlp_attn: int = 1,
+        n_hidden_mlp_attn: int = 16,
         activation=nn.LeakyReLU,
     ):
         super().__init__()
+
+        allowed_scoring_methods = ["attn", "gated_attn", "mlp", "sum", "mean", "max"]
+        if scoring not in allowed_scoring_methods:
+            raise ValueError(f"Invalid scoring method: {scoring}. Must be one of {allowed_scoring_methods}.")
 
         self.scoring = scoring
         self.patient_batch_size = sample_batch_size
@@ -288,43 +290,50 @@ class Aggregator(nn.Module):
                 )
 
     def forward(self, x) -> torch.Tensor:
-        """Forward computation on ``x``.
+        """Forward computation on `x`.
 
         Parameters
         ----------
-        x
-            Tensor of values with shape ``(n_input,)``.
+        x : torch.Tensor
+            Input tensor of shape `(batch_size, N, n_input)`.
 
         Returns
         -------
-        Tensor of pooled values.
+        torch.Tensor
+            Aggregated output tensor of shape `(batch_size, n_input)`.
         """
-        # TODO add sum, mean and max pooling
-        if self.scoring == "attn":
-            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
-            self.A = self.attention(x)  # Nx1
-            self.A = torch.transpose(self.A, -1, -2)  # 1xN
-            self.A = F.softmax(self.A, dim=-1)  # softmax over N
+        # Apply different pooling strategies based on the scoring method
+        if self.scoring in ["attn", "gated_attn", "mlp", "sum", "mean", "max"]:
+            if self.scoring == "attn":
+                # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
+                A = self.attention(x)  # (batch_size, N, 1)
+                A = A.transpose(1, 2)  # (batch_size, 1, N)
+                A = F.softmax(A, dim=-1)
+            elif self.scoring == "gated_attn":
+                # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
+                A_V = self.attention_V(x)  # (batch_size, N, attn_dim)
+                A_U = self.attention_U(x)  # (batch_size, N, attn_dim)
+                A = self.attention_weights(A_V * A_U)  # (batch_size, N, 1)
+                A = A.transpose(1, 2)  # (batch_size, 1, N)
+                A = F.softmax(A, dim=-1)
+            elif self.scoring == "mlp":
+                A = self.attention(x)  # (batch_size, N, 1)
+                A = A.transpose(1, 2)  # (batch_size, 1, N)
+                A = F.softmax(A, dim=-1)
 
-        elif self.scoring == "gated_attn":
-            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
-            A_V = self.attention_V(x)  # NxD
-            A_U = self.attention_U(x)  # NxD
-            self.A = self.attention_weights(A_V * A_U)  # element wise multiplication # Nx1
-            self.A = torch.transpose(self.A, -1, -2)  # 1xN
-            self.A = F.softmax(self.A, dim=-1)  # softmax over N
+            elif self.scoring == "sum":
+                return torch.sum(x, dim=1)  # (batch_size, n_input)
+            elif self.scoring == "mean":
+                return torch.mean(x, dim=1)  # (batch_size, n_input)
+            elif self.scoring == "max":
+                return torch.max(x, dim=1).values  # (batch_size, n_input)
+            else:
+                raise NotImplementedError(
+                    f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "mlp", "sum", "mean", "max"].'
+                    )
+            if self.scale:
+                if self.patient_batch_size is None:
+                    raise ValueError("patient_batch_size must be set when scale is True.")
+                A = A * A.shape[-1] / self.patient_batch_size
 
-        elif self.scoring == "mlp":
-            self.A = self.attention(x)  # N
-            self.A = torch.transpose(self.A, -1, -2)
-            self.A = F.softmax(self.A, dim=-1)
-
-        else:
-            raise NotImplementedError(
-                f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "mlp"].'
-            )
-
-        if self.scale:
-            self.A = self.A * self.A.shape[-1] / self.patient_batch_size
-
-        return torch.bmm(self.A, x).squeeze(dim=1)
+            pooled = torch.bmm(A, x).squeeze(dim=1)  # (batch_size, n_input)
