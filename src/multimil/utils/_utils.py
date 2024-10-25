@@ -50,12 +50,12 @@ def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
     -------
     Size factor key.
     """
-    # TODO check that organize_multimodal_anndatas was run, i.e. that .uns['modality_lengths'] was added, needed for q2r
+
     if size_factor_key is not None and rna_indices_end is not None:
         raise ValueError(
             "Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`."
         )
-    # TODO change to when both are None and data in unimodal, use all input features to calculate the size factors, add warning
+
     if size_factor_key is None and rna_indices_end is None:
         raise ValueError("One of [`size_factor_key`, `rna_indices_end`] has to be specified, but both are `None`.")
 
@@ -68,43 +68,6 @@ def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
         else:
             adata.obs.loc[:, "size_factors"] = adata_rna.X.sum(1).T.tolist()
         return "size_factors"
-
-#def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
-#    """Calculate size factors.
-#
-#    Parameters
-#    ----------
-#    adata : AnnData
-#        Annotated data object.
-#    size_factor_key : str
-#        Key in `adata.obs` where size factors are stored.
-#    rna_indices_end : int
-#        Index of the last RNA feature in the data.
-#
-#    Returns
-#    -------
-#    str
-#        Size factor key.
-#    """
-#    # TODO check that organize_multimodal_anndatas was run, i.e. that .uns['modality_lengths'] was added, needed for q2r
-#    if 'modality_lengths' not in adata.uns:
-#        raise ValueError("The function 'organize_multimodal_anndatas' must be run before calculating size factors.")
-#
-#    # TODO change to when both are None and data in unimodal, use all input features to calculate the size factors, add warning
-#    if size_factor_key is not None and rna_indices_end is not None:
-#        raise ValueError("Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`.")
-#
-#    if size_factor_key is None and rna_indices_end is None:
-#        print("Warning: Both `size_factor_key` and `rna_indices_end` are None. Using all input features to calculate the size factors.")
-#        size_factor_key = "size_factors"
-#        adata.obs[size_factor_key] = adata.X.sum(1).A1 if scipy.sparse.issparse(adata.X) else adata.X.sum(1)
-#
-#    if size_factor_key is not None:
-#        return size_factor_key
-#
-#    adata_rna = adata[:, :rna_indices_end].copy()
-#    adata.obs["size_factors"] = adata_rna.X.sum(1).A1 if scipy.sparse.issparse(adata_rna.X) else adata_rna.X.sum(1)
-#    return "size_factors"
 
 def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys):
     """Setup ordinal regression.
@@ -152,7 +115,7 @@ def select_covariates(covs, prediction_idx, n_samples_in_batch) -> torch.Tensor:
         covs = torch.index_select(covs, 1, torch.tensor(prediction_idx))
         covs = covs.view(n_samples_in_batch, -1, len(prediction_idx))[:, 0, :]
     else:
-        covs = torch.tensor([])
+        covs = torch.empty((n_samples_in_batch, 0))
     return covs
 
 def prep_minibatch(covs, sample_batch_size) -> tuple[int, int]:
@@ -206,10 +169,7 @@ def get_predictions(
     for i in range(len(prediction_idx)):
         bag_pred[i] = bag_pred.get(i, []) + [pred_values[offset + i].cpu()]
         bag_true[i] = bag_true.get(i, []) + [true_values[:, i].cpu()]
-        # TODO in ord reg had pred[len(self.mil.class_idx) + i].repeat(1, size).flatten()
-        # in reg had
-        # cell level, i.e. prediction for the cell = prediction for the bag
-        full_pred[i] = full_pred.get(i, []) + [pred_values[offset + i].unsqueeze(1).repeat(1, size, 1).flatten(0, 1)]
+        full_pred[i] = full_pred.get(i, []) + [pred_values[offset + i]]
     return bag_pred, bag_true, full_pred
 
 def get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, sample_batch_size):
@@ -278,7 +238,7 @@ def save_predictions_in_adata(
     None
     """
     # cell level predictions
-    df = create_df(cell_pred[idx], class_names, index=adata.obs_names)
+    df = create_df([cell_pred[i][0] for i in idx], class_names, index=adata.obs_names)
     adata.obsm[f"full_predictions_{name}"] = df
     if clip == "clip":  # ord regression
         adata.obs[f"predicted_{name}"] = np.clip(np.round(df.to_numpy()), a_min=0.0, a_max=len(class_names) - 1.0)
@@ -293,8 +253,8 @@ def save_predictions_in_adata(
         )
 
     # bag level predictions
-    adata.uns[f"bag_true_{name}"] = create_df(bag_true, predictions)
-    df_bag = create_df(bag_pred[idx], class_names)
+    adata.uns[f"bag_true_{name}"] = create_df([bag_true[i][0] for i in idx], columns=predictions)
+    df_bag = create_df([bag_pred[i][0] for i in idx], columns=None)
     if clip == "clip":
         adata.uns[f"bag_full_predictions_{name}"] = np.clip(
             np.round(df_bag.to_numpy()), a_min=0.0, a_max=len(class_names) - 1.0
@@ -321,7 +281,8 @@ def plt_plot_losses(history, loss_names, save):
     None
     """
     df = pd.concat(history, axis=1)
-    df.columns = df.columns.droplevel(-1)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.droplevel(-1)
     df["epoch"] = df.index
 
     nrows = ceil(len(loss_names) / 2)
@@ -336,3 +297,5 @@ def plt_plot_losses(history, loss_names, save):
         plt.legend()
     if save is not None:
         plt.savefig(save, bbox_inches="tight")
+    else:
+        plt.show()
