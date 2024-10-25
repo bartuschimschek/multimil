@@ -5,6 +5,7 @@ import torch
 from scvi.data import AnnDataManager
 from scvi.dataloaders import AnnTorchDataset
 from torch.utils.data import DataLoader, Sampler
+from math import ceil
 
 # Adjusted from scvi-tools
 # https://github.com/YosefLab/scvi-tools/blob/ac0c3e04fcc2772fdcf7de4de819db3af9465b6b/scvi/dataloaders/_ann_dataloader.py#L15
