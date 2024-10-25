@@ -39,14 +39,21 @@ class MMD(torch.nn.Module):
             Gaussian kernel between ``x`` and ``y``.
         """
 
-        # Check if x and y have the same shape
-        if x.shape != y.shape:
-            raise ValueError(f"Input tensors x and y must have the same shape, but got {x.shape} and {y.shape}")
+        # Check if x and y have the same feature dimension
+        if x.shape[1] != y.shape[1]:
+            raise ValueError(
+                f"Input tensors x and y must have the same number of features, "
+                f"but got {x.shape[1]} and {y.shape[1]}"
+            )
 
         if gamma is None:
             gamma = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1,
                      1, 5, 10, 15, 20, 25, 30, 35, 100,
                      1e3, 1e4, 1e5, 1e6]
+        elif len(gamma) == 0:
+            raise ValueError("The gamma list cannot be empty.")
+        elif not all(g > 0 for g in gamma):
+            raise ValueError("All gamma values must be positive.")
 
         # Convert gamma to a torch.Tensor (ensure it's on the correct device)
         gamma = torch.as_tensor(gamma, device=x.device, dtype=x.dtype)
@@ -82,9 +89,9 @@ class MMD(torch.nn.Module):
         """
         # In case there is only one sample in a batch belonging to one of the groups, then skip the batch
         if len(x) == 1 or len(y) == 1:
-            return torch.tensor(0.0)
+            return torch.tensor(0.0, device=x.device, dtype=x.dtype)
 
-        # Resampling logic to ensure x and y have the same shape NEW (03.10.2024)
+        # Resample to ensure x and y have the same batch size
         if x.shape[0] > y.shape[0]:
             indices = torch.randperm(x.shape[0])[:y.shape[0]]
             x = x[indices]
