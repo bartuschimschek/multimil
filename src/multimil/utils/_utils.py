@@ -50,12 +50,10 @@ def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
     -------
     Size factor key.
     """
-
     if size_factor_key is not None and rna_indices_end is not None:
         raise ValueError(
             "Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`."
         )
-
     if size_factor_key is None and rna_indices_end is None:
         raise ValueError("One of [`size_factor_key`, `rna_indices_end`] has to be specified, but both are `None`.")
 
@@ -169,7 +167,10 @@ def get_predictions(
     for i in range(len(prediction_idx)):
         bag_pred[i] = bag_pred.get(i, []) + [pred_values[offset + i].cpu()]
         bag_true[i] = bag_true.get(i, []) + [true_values[:, i].cpu()]
-        full_pred[i] = full_pred.get(i, []) + [pred_values[offset + i]]
+        # TODO in ord reg had pred[len(self.mil.class_idx) + i].repeat(1, size).flatten()
+        # in reg had
+        # cell level, i.e. prediction for the cell = prediction for the bag
+        full_pred[i] = full_pred.get(i, []) + [pred_values[offset + i].unsqueeze(1).repeat(1, size, 1).flatten(0, 1)]
     return bag_pred, bag_true, full_pred
 
 def get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, sample_batch_size):
@@ -238,7 +239,7 @@ def save_predictions_in_adata(
     None
     """
     # cell level predictions
-    df = create_df([cell_pred[i][0] for i in idx], class_names, index=adata.obs_names)
+    df = create_df(cell_pred[idx], class_names, index=adata.obs_names)
     adata.obsm[f"full_predictions_{name}"] = df
     if clip == "clip":  # ord regression
         adata.obs[f"predicted_{name}"] = np.clip(np.round(df.to_numpy()), a_min=0.0, a_max=len(class_names) - 1.0)
@@ -253,8 +254,8 @@ def save_predictions_in_adata(
         )
 
     # bag level predictions
-    adata.uns[f"bag_true_{name}"] = create_df([bag_true[i][0] for i in idx], columns=predictions)
-    df_bag = create_df([bag_pred[i][0] for i in idx], columns=None)
+    adata.uns[f"bag_true_{name}"] = create_df(bag_true, predictions)
+    df_bag = create_df(bag_pred[idx], class_names)
     if clip == "clip":
         adata.uns[f"bag_full_predictions_{name}"] = np.clip(
             np.round(df_bag.to_numpy()), a_min=0.0, a_max=len(class_names) - 1.0
