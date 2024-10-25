@@ -32,6 +32,8 @@ class GroupDataSplitter(DataSplitter):
         **kwargs,
     ):
         self.group_column = group_column
+        if group_column not in adata_manager.adata.obs.columns:
+            raise ValueError(f"Group column '{group_column}' not found in AnnData.obs")
         super().__init__(adata_manager, train_size, validation_size, **kwargs)
 
     def _create_dataloader(self, indices, shuffle: bool):
