@@ -334,7 +334,7 @@ class Aggregator(nn.Module):
             if self.scale:
                 if self.patient_batch_size is None:
                     raise ValueError("patient_batch_size must be set when scale is True.")
-                A = A * A.shape[-1] / self.patient_batch_size
+                self.A = A * A.shape[-1] / self.patient_batch_size
 
             pooled = torch.bmm(A, x).squeeze(dim=1)  # (batch_size, n_input)
             return pooled
