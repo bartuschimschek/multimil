@@ -2,6 +2,7 @@ from scvi.data import AnnDataManager
 from scvi.dataloaders import DataSplitter
 from scvi.model._utils import parse_device_args
 from typing import Optional, Union
+from multimil.dataloaders._ann_dataloader import GroupAnnDataLoader
 
 class GroupDataSplitter(DataSplitter):
     """Creates data loaders ``train_set``, ``validation_set``, ``test_set``.
