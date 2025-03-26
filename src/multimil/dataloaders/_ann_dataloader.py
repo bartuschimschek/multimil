@@ -184,7 +184,7 @@ class GroupAnnDataLoader(DataLoader):
         if adata_manager.adata is None:
             raise ValueError("Please run register_fields() on your AnnDataManager object first.")
 
-        if data_and_attributes:
+        if data_and_attributes is not None:
             data_registry = adata_manager.data_registry
             for key in data_and_attributes.keys():
                 if key not in data_registry:
