@@ -247,7 +247,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             outputs = self.module.inference(**inference_inputs)
             z = outputs["z"]
             latent += [z.cpu()]
-            #gc.collect()
 
         adata.obsm["X_multiMIL"] = torch.cat(latent).numpy()
 
@@ -392,7 +391,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             enable_checkpointing=True,
             **kwargs,
         )
-        #gc.collect()
         return runner()
 
     @classmethod
