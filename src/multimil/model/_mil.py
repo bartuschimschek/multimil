@@ -1,5 +1,6 @@
 import logging
 import warnings
+from typing import Union
 
 import anndata as ad
 import torch
@@ -8,7 +9,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from scvi import REGISTRY_KEYS
 from scvi.data import AnnDataManager, fields
 from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY
-from scvi.model._utils import parse_use_gpu_arg
+from scvi.model._utils import parse_device_args
 from scvi.model.base import ArchesMixin, BaseModelClass
 from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.model.base._utils import _initialize_model
@@ -230,7 +231,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         self,
         max_epochs: int = 200,
         lr: float = 5e-4,
-        use_gpu: str | int | bool | None = None,
+        accelerator: str = "auto",
+        device: Union[int, str] = "auto",
         train_size: float = 0.9,
         validation_size: float | None = None,
         batch_size: int = 256,
@@ -352,7 +354,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 raise ValueError(
                     f"`save_checkpoint_every_n_epochs` = {save_checkpoint_every_n_epochs} so `path_to_checkpoints` has to be not None but is {path_to_checkpoints}."
                 )
-        # until here
 
         data_splitter = GroupDataSplitter(
             self.adata_manager,
@@ -360,7 +361,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             train_size=train_size,
             validation_size=validation_size,
             batch_size=batch_size,
-            use_gpu=use_gpu,
         )
 
         training_plan = AdversarialTrainingPlan(self.module, **plan_kwargs)
@@ -369,7 +369,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             training_plan=training_plan,
             data_splitter=data_splitter,
             max_epochs=max_epochs,
-            use_gpu=use_gpu,
             early_stopping=early_stopping,
             check_val_every_n_epoch=check_val_every_n_epoch,
             early_stopping_monitor=early_stopping_monitor,
@@ -578,7 +577,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         cls,
         adata: AnnData,
         reference_model: BaseModelClass,
-        use_gpu: str | int | bool | None = None,
+        accelerator: str = "auto",
+        device: Union[int, str] = "auto",
     ) -> BaseModelClass:
         """Online update of a reference model with scArches algorithm # TODO cite.
 
@@ -601,7 +601,12 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         # currently this function works only if the prediction cov is present in the .obs of the query
         # TODO need to allow it to be missing, maybe add a dummy column to .obs of query adata
 
-        _, _, device = parse_use_gpu_arg(use_gpu)
+        _, _, device = parse_device_args(
+            accelerator=accelerator,
+            devices=device,
+            return_device="torch",
+            validate_single_device=True,
+        )
 
         attr_dict, _, _ = _get_loaded_data(reference_model, device=device)
 

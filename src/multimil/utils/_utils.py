@@ -1,31 +1,29 @@
 from math import ceil
-
 import numpy as np
 import pandas as pd
 import scipy
 import torch
 from matplotlib import pyplot as plt
 
-
 def create_df(pred, columns=None, index=None) -> pd.DataFrame:
     """Create a pandas DataFrame from a list of predictions.
 
     Parameters
     ----------
-    pred
-        List of predictions.
-    columns
+    pred : list or dict
+        List or dict of predictions.
+    columns : list, optional
         Column names, i.e. class_names.
-    index
+    index : list, optional
         Index names, i.e. obs_names.
 
     Returns
     -------
-    DataFrame with predictions.
+    pd.DataFrame
+        DataFrame with predictions.
     """
     if isinstance(pred, dict):
-        for key in pred.keys():
-            pred[key] = torch.cat(pred[key]).squeeze().cpu().numpy()
+        pred = {key: torch.cat(value).squeeze().cpu().numpy() for key, value in pred.items()}
     else:
         pred = torch.cat(pred).squeeze().cpu().numpy()
 
@@ -35,7 +33,6 @@ def create_df(pred, columns=None, index=None) -> pd.DataFrame:
     if columns is not None:
         df.columns = columns
     return df
-
 
 def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
     """Calculate size factors.
@@ -53,12 +50,10 @@ def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
     -------
     Size factor key.
     """
-    # TODO check that organize_multimodal_anndatas was run, i.e. that .uns['modality_lengths'] was added, needed for q2r
     if size_factor_key is not None and rna_indices_end is not None:
         raise ValueError(
             "Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`."
         )
-    # TODO change to when both are None and data in unimodal, use all input features to calculate the size factors, add warning
     if size_factor_key is None and rna_indices_end is None:
         raise ValueError("One of [`size_factor_key`, `rna_indices_end`] has to be specified, but both are `None`.")
 
@@ -72,24 +67,22 @@ def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
             adata.obs.loc[:, "size_factors"] = adata_rna.X.sum(1).T.tolist()
         return "size_factors"
 
-
 def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys):
     """Setup ordinal regression.
 
     Parameters
     ----------
-    adata
+    adata : AnnData
         Annotated data object.
-    ordinal_regression_order
+    ordinal_regression_order : dict
         Order of categories for ordinal regression.
-    categorical_covariate_keys
+    categorical_covariate_keys : list
         Keys of categorical covariates.
     """
-    # TODO make sure not to assume categorical columns for ordinal regression -> change to np.unique if needed
     if ordinal_regression_order is not None:
         if not set(ordinal_regression_order.keys()).issubset(categorical_covariate_keys):
             raise ValueError(
-                f"All keys {ordinal_regression_order.keys()} has to be registered as categorical covariates too, but categorical_covariate_keys = {categorical_covariate_keys}"
+                f"All keys {ordinal_regression_order.keys()} have to be registered as categorical covariates too, but categorical_covariate_keys = {categorical_covariate_keys}"
             )
         for key in ordinal_regression_order.keys():
             adata.obs[key] = adata.obs[key].astype("category")
@@ -97,55 +90,50 @@ def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covari
                 raise ValueError(
                     f"Categories of adata.obs[{key}]={adata.obs[key].cat.categories} are not the same as categories specified = {ordinal_regression_order[key]}"
                 )
-            adata.obs[key] = adata.obs[key].cat.reorder_categories(ordinal_regression_order[key])
-
+            adata.obs[key] = adata.obs[key].cat.reorder_categories(ordinal_regression_order[key], ordered=True)
 
 def select_covariates(covs, prediction_idx, n_samples_in_batch) -> torch.Tensor:
     """Select prediction covariates from all covariates.
 
     Parameters
     ----------
-    covs
+    covs : torch.Tensor
         Covariates.
-    prediction_idx
+    prediction_idx : list
         Index of predictions.
-    n_samples_in_batch
+    n_samples_in_batch : int
         Number of samples in the batch.
 
     Returns
     -------
-    Prediction covariates.
+    torch.Tensor
+        Prediction covariates.
     """
     if len(prediction_idx) > 0:
-        covs = torch.index_select(covs, 1, prediction_idx)
+        covs = torch.index_select(covs, 1, torch.tensor(prediction_idx))
         covs = covs.view(n_samples_in_batch, -1, len(prediction_idx))[:, 0, :]
     else:
-        covs = torch.tensor([])
+        covs = torch.empty((n_samples_in_batch, 0))
     return covs
-
 
 def prep_minibatch(covs, sample_batch_size) -> tuple[int, int]:
     """Prepare minibatch.
 
     Parameters
     ----------
-    covs
+    covs : torch.Tensor
         Covariates.
-    sample_batch_size
+    sample_batch_size : int
         Sample batch size.
 
     Returns
     -------
-    Batch size and number of samples in the batch.
+    tuple[int, int]
+        Batch size and number of samples in the batch.
     """
     batch_size = covs.shape[0]
-
-    if batch_size % sample_batch_size != 0:
-        n_samples_in_batch = 1
-    else:
-        n_samples_in_batch = batch_size // sample_batch_size
+    n_samples_in_batch = 1 if batch_size % sample_batch_size != 0 else batch_size // sample_batch_size
     return batch_size, n_samples_in_batch
-
 
 def get_predictions(
     prediction_idx, pred_values, true_values, size, bag_pred, bag_true, full_pred, offset=0
@@ -154,26 +142,27 @@ def get_predictions(
 
     Parameters
     ----------
-    prediction_idx
+    prediction_idx : list
         Index of predictions.
-    pred_values
+    pred_values : torch.Tensor
         Predicted values.
-    true_values
+    true_values : torch.Tensor
         True values.
-    size
+    size : int
         Size of the bag minibatch.
-    bag_pred
+    bag_pred : dict
         Bag predictions.
-    bag_true
+    bag_true : dict
         Bag true values.
-    full_pred
+    full_pred : dict
         Full predictions, i.e. on cell-level.
-    offset
+    offset : int, optional
         Offset, needed because of several possible types of predictions.
 
     Returns
     -------
-    Bag predictions, bag true values, full predictions on cell-level.
+    tuple[dict, dict, dict]
+        Bag predictions, bag true values, full predictions on cell-level.
     """
     for i in range(len(prediction_idx)):
         bag_pred[i] = bag_pred.get(i, []) + [pred_values[offset + i].cpu()]
@@ -184,28 +173,28 @@ def get_predictions(
         full_pred[i] = full_pred.get(i, []) + [pred_values[offset + i].unsqueeze(1).repeat(1, size, 1).flatten(0, 1)]
     return bag_pred, bag_true, full_pred
 
-
 def get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, sample_batch_size):
     """Get bag information.
 
     Parameters
     ----------
-    bags
+    bags : list
         Bags.
-    n_samples_in_batch
+    n_samples_in_batch : int
         Number of samples in the batch.
-    minibatch_size
+    minibatch_size : int
         Minibatch size.
-    cell_counter
+    cell_counter : int
         Cell counter.
-    bag_counter
+    bag_counter : int
         Bag counter.
-    sample_batch_size
+    sample_batch_size : int
         Sample batch size.
 
     Returns
     -------
-    Updated bags, cell counter, and bag counter.
+    tuple[list, int, int]
+        Updated bags, cell counter, and bag counter.
     """
     if n_samples_in_batch == 1:
         bags += [[bag_counter] * minibatch_size]
@@ -217,7 +206,6 @@ def get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_cou
         cell_counter += sample_batch_size * n_samples_in_batch
     return bags, cell_counter, bag_counter
 
-
 def save_predictions_in_adata(
     adata, idx, predictions, bag_pred, bag_true, cell_pred, class_names, name, clip, reg=False
 ):
@@ -225,26 +213,30 @@ def save_predictions_in_adata(
 
     Parameters
     ----------
-    adata
+    adata : AnnData
         Annotated data object.
-    idx
+    idx : list
         Index, i.e. obs_names.
-    predictions
+    predictions : list
         Predictions.
-    bag_pred
+    bag_pred : dict
         Bag predictions.
-    bag_true
+    bag_true : dict
         Bag true values.
-    cell_pred
+    cell_pred : dict
         Cell predictions.
-    class_names
+    class_names : list
         Class names.
-    name
+    name : str
         Name of the prediction column.
-    clip
-        Whether to transofrm the predictions. One of `clip`, `argmax`, or `none`.
-    reg
-        Whether the rediciton task is a regression task.
+    clip : str
+        Whether to transform the predictions. One of `clip`, `argmax`, or `none`.
+    reg : bool, optional
+        Whether the prediction task is a regression task.
+
+    Returns
+    -------
+    None
     """
     # cell level predictions
     df = create_df(cell_pred[idx], class_names, index=adata.obs_names)
@@ -255,7 +247,7 @@ def save_predictions_in_adata(
         adata.obs[f"predicted_{name}"] = df.to_numpy().argmax(axis=1)
     else:
         adata.obs[f"predicted_{name}"] = df.to_numpy()
-    if reg is False:
+    if not reg:
         adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].astype("category")
         adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].cat.rename_categories(
             dict(enumerate(class_names))
@@ -273,21 +265,25 @@ def save_predictions_in_adata(
     else:
         adata.uns[f"bag_full_predictions_{name}"] = df_bag.to_numpy()
 
-
 def plt_plot_losses(history, loss_names, save):
     """Plot losses.
 
     Parameters
     ----------
-    history
+    history : list
         History of losses.
-    loss_names
+    loss_names : list
         Loss names to plot.
-    save
+    save : str
         Path to save the plot.
+
+    Returns
+    -------
+    None
     """
     df = pd.concat(history, axis=1)
-    df.columns = df.columns.droplevel(-1)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.droplevel(-1)
     df["epoch"] = df.index
 
     nrows = ceil(len(loss_names) / 2)
@@ -302,3 +298,5 @@ def plt_plot_losses(history, loss_names, save):
         plt.legend()
     if save is not None:
         plt.savefig(save, bbox_inches="tight")
+    else:
+        plt.show()

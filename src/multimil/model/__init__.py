@@ -1,5 +1,5 @@
-from ._mil import MILClassifier
 from ._multivae import MultiVAE
-from ._multivae_mil import MultiVAE_MIL
+from ._mil import MILClassifier
+from ._unsupervised_mil import UnsupervisedMIL
 
-__all__ = ["MultiVAE", "MILClassifier", "MultiVAE_MIL"]
+__all__ = ["MultiVAE", "MILClassifier", "UnsupervisedMIL"]
